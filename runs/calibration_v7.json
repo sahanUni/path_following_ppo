@@ -1,0 +1,44 @@
+{
+  "base": [
+    26.0,
+    0.5,
+    4.4
+  ],
+  "low": [
+    15.0,
+    0.0,
+    2.5
+  ],
+  "high": [
+    50.0,
+    1.5,
+    6.0
+  ],
+  "metadata": {
+    "created_utc": "2026-08-09T11:11:48.419272+00:00",
+    "seed": 7,
+    "paths": [
+      "arc",
+      "scurve",
+      "uturn",
+      "slalom",
+      "figure8",
+      "hairpin",
+      "spiral",
+      "zigzag",
+      "square",
+      "zigzag60",
+      "zigzag30"
+    ],
+    "speeds": [
+      0.3,
+      0.5,
+      0.7
+    ],
+    "physics_samples": 2,
+    "candidate_count": 10,
+    "scenario_count": 99,
+    "selection": "completion within 90% of best, then mean distance, ITAE, gain magnitude",
+    "box_source": "explicit"
+  }
+}

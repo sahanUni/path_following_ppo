@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Run outputs are regenerated, and the archives alone are 121 MB. But the
+# calibration artifacts are experiment INPUTS -- calibration_v7.json defines the
+# baseline gains and the action box, so a clone without it cannot reproduce
+# anything. Those are kept, along with one reference model and its confirmation
+# results, so a fresh machine can be checked against a known-good answer before
+# any compute is spent on it.
+runs/*
+!runs/calibration_*.json
+!runs/calibration_*_candidates.csv
+!runs/v7_seed7/
+runs/v7_seed7/*
+!runs/v7_seed7/final_model.zip
+!runs/v7_seed7/confirm_200.csv

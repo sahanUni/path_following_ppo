@@ -1,0 +1,43 @@
+{
+  "base": [
+    1.2263985657284837,
+    0.026326522827873622,
+    2.4615478716510757
+  ],
+  "low": [
+    0.25,
+    0.0,
+    1.8461609037383067
+  ],
+  "high": [
+    2.25,
+    0.5,
+    3.0769348395638447
+  ],
+  "metadata": {
+    "created_utc": "2026-08-09T02:37:53.248723+00:00",
+    "seed": 7,
+    "paths": [
+      "arc",
+      "scurve",
+      "uturn",
+      "slalom",
+      "figure8",
+      "hairpin",
+      "spiral",
+      "zigzag",
+      "square",
+      "zigzag60",
+      "zigzag30"
+    ],
+    "speeds": [
+      0.3,
+      0.5,
+      0.7
+    ],
+    "physics_samples": 2,
+    "candidate_count": 48,
+    "scenario_count": 99,
+    "selection": "completion, mean distance, ITAE, gain magnitude"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "base": [
+    42.01236293280581,
+    2.1411012319474065,
+    4.153628260907563
+  ],
+  "low": [
+    25.950502323412447,
+    1.605825923960555,
+    1.7946293230861587
+  ],
+  "high": [
+    50.0,
+    2.903264319264113,
+    5.192035326134454
+  ],
+  "metadata": {
+    "created_utc": "2026-08-04T16:33:15.155689+00:00",
+    "seed": 7,
+    "derived_from": "runs\\calibration_candidates.csv",
+    "candidate_count": 48,
+    "selection": "completion, mean distance, ITAE, gain magnitude"
+  }
+}

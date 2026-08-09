@@ -1,0 +1,79 @@
+<!--
+  PROVENANCE: copied from D:\Msc\Experiments\PID_Sandbox\core\car_model.xml on
+  2026-07-28, which is itself D:\Msc\Experiments\Q1Q2\car_model.xml.
+  Differences from the Q1Q2 original, ALL visual-only (physics is byte-identical):
+    - floor plane widened from size "3 3 .01" to "12 12 .01" so the arc stays
+      on the rendered grid
+    - "friction_patch_visual" geom removed (the sandbox has no friction patch)
+    - "start_stripe" added: a flat floor marker with contype="0"
+      conaffinity="0", so it can never touch the car.
+  Difference from PID_Sandbox's copy:
+    - "finish_stripe" REMOVED. There is no target point in the path-following
+      task, so a finish line means nothing; the arc end is marked in the
+      viewer's decorative scene instead (viewer.py).
+-->
+<mujoco>
+  <compiler autolimits="true"/>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+    <texture name="flag" type="2d" builtin="checker" width="64" height="64" rgb1="1 1 1" rgb2=".85 .1 .12"/>
+    <material name="flag" texture="flag" texrepeat="2 14" texuniform="false"/>
+    <mesh name="chasis" scale=".01 .006 .0015"
+      vertex=" 9   2   0
+              -10  10  10
+               9  -2   0
+               10  3  -10
+               10 -3  -10
+              -8   10 -10
+              -10 -10  10
+              -8  -10 -10
+              -5   0   20"/>
+  </asset>
+
+  <default>
+    <joint damping=".03" actuatorfrcrange="-1 1"/>
+    <default class="wheel">
+      <geom type="cylinder" size=".03 .01" rgba=".5 .5 1 1"/>
+    </default>
+    <default class="decor">
+      <site type="box" rgba=".5 1 .5 1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="12 12 .01" material="grid"/>
+    <geom name="start_stripe" type="box" pos="0 0 .002" size=".05 .5 .002"
+          rgba=".18 .85 .35 .95" contype="0" conaffinity="0"/>
+    <body name="car" pos="0 0 .03">
+      <freejoint/>
+      <light name="top light" pos="0 0 2" mode="trackcom" diffuse=".4 .4 .4"/>
+      <geom name="chasis" type="mesh" mesh="chasis"/>
+      <geom name="front wheel" pos=".08 0 -.015" type="sphere" size=".015" condim="1" priority="1"/>
+      <light name="front light" pos=".1 0 .02" dir="2 0 -1" diffuse="1 1 1"/>
+      <body name="left wheel" pos="-.07 .06 0" zaxis="0 1 0">
+        <joint name="left"/>
+        <geom class="wheel"/>
+        <site class="decor" size=".006 .025 .012"/>
+        <site class="decor" size=".025 .006 .012"/>
+      </body>
+      <body name="right wheel" pos="-.07 -.06 0" zaxis="0 1 0">
+        <joint name="right"/>
+        <geom class="wheel"/>
+        <site class="decor" size=".006 .025 .012"/>
+        <site class="decor" size=".025 .006 .012"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="left_motor" joint="left" ctrlrange="-1 1"/>
+    <motor name="right_motor" joint="right" ctrlrange="-1 1"/>
+  </actuator>
+
+  <sensor>
+    <jointactuatorfrc name="right" joint="right"/>
+    <jointactuatorfrc name="left" joint="left"/>
+  </sensor>
+</mujoco>
