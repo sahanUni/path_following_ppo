@@ -191,6 +191,41 @@ def main() -> None:
     print("  a scheduler should be clearly NEGATIVE on delay;"
           " near zero means a constant")
 
+    # What is on the table at all. The per-scenario oracle picks, with
+    # hindsight, the best FIXED gain for each scenario individually. It is the
+    # ceiling for any policy that merely selects a gain per episode, so the gap
+    # between it and the best single fixed gain is the entire prize a scheduler
+    # is competing for. If that gap is near zero, no amount of training or
+    # privileged information can produce a large win, and a flat result is the
+    # correct answer rather than a failure.
+    data, _ = load_confirmation(files[0])
+    fixed_names = [name for name in data if name != "PPO"]
+    if len(fixed_names) > 1:
+        scenarios = sorted(data[fixed_names[0]])
+        best_single = max(
+            fixed_names,
+            key=lambda n: sum(data[n][s]["finished"] for s in scenarios),
+        )
+        best_single_done = sum(data[best_single][s]["finished"] for s in scenarios)
+        oracle_done = sum(
+            1 for s in scenarios if any(data[n][s]["finished"] for n in fixed_names)
+        )
+        n = len(scenarios)
+        print(f"\nhow much is there to win? (fixed gains on {files[0].parent.name})")
+        print(f"  best SINGLE fixed gain   : {best_single_done}/{n}  ({best_single})")
+        print(f"  per-scenario ORACLE      : {oracle_done}/{n}")
+        prize = (oracle_done - best_single_done) / n
+        print(f"  the entire prize for per-episode gain selection: "
+              f"{prize:+.3f} ({oracle_done - best_single_done} episodes)")
+        best_ppo = max(r["ppo_done"] for r in per_seed)
+        print(f"  best PPO seed            : {best_ppo}/{n}"
+              + ("  <- beats the oracle, so it is varying gain WITHIN episodes"
+                 if best_ppo > oracle_done else ""))
+        if prize < 0.03:
+            print("  NOTE: the prize is small. A policy that selects one gain per")
+            print("  episode cannot win much here however well it is trained or")
+            print("  informed; only within-episode variation can exceed it.")
+
     spread = rates.max() - rates.min()
     print(f"\n  seed-to-seed spread in PPO completion: {spread:.3f}")
     if spread > (rates.mean() - fixed_rates.mean()):
