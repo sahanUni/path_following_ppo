@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
+import shutil
+import tempfile
 import unittest
 
 import numpy as np
@@ -279,6 +282,25 @@ class InteractiveTuningTests(unittest.TestCase):
     def test_a_named_but_missing_model_is_an_error_not_a_downgrade(self):
         with self.assertRaises(FileNotFoundError):
             DirectComparisonRunner(self.project, "runs/does_not_exist.zip")
+
+    def test_a_model_whose_arms_manifest_is_wrong_is_rejected(self):
+        """A missing arms.json defaults to blind, which is correct for runs made
+        before train.py wrote one -- and silently wrong for a context model that
+        lost its manifest. That must be caught at load, not inside SB3."""
+        if not self.runner.models:
+            self.skipTest("no model available")
+        source = self.runner.models[0]["path"]
+        with tempfile.TemporaryDirectory(dir=self.project / "runs") as directory:
+            staged = Path(directory) / "best_model.zip"
+            shutil.copy(source, staged)
+            # Claim the blind model needs the wider context observation.
+            (Path(directory) / "arms.json").write_text(
+                json.dumps({"preview": True, "plant_context": True}), encoding="utf-8"
+            )
+            relative = staged.relative_to(self.project)
+            with self.assertRaises(ValueError) as caught:
+                DirectComparisonRunner(self.project, str(relative))
+            self.assertIn("arms.json", str(caught.exception))
 
 
 if __name__ == "__main__":

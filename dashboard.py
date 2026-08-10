@@ -194,11 +194,30 @@ class DirectComparisonRunner:
             # plant-context model need environments of different widths, so the
             # arms travel with the model rather than being a global setting.
             arms = resolve_arms(resolved.resolve())
+            model = PPO.load(resolved, device="cpu")
+            # A missing arms.json defaults to blind, which is right for runs
+            # made before train.py started writing one -- but silently wrong
+            # for a context model whose manifest went astray. Checked here so
+            # it reports the artifact and the fix, rather than failing later
+            # inside SB3 with a bare shape error from a callback.
+            probe = PathFollowingEnv(
+                calibration=self.calibration, training=False,
+                preview=arms["preview"], plant_context=arms["plant_context"],
+            )
+            width = probe.observation_space.shape[0]
+            probe.close()
+            expected = model.observation_space.shape[0]
+            if width != expected:
+                raise ValueError(
+                    f"{resolved.name} expects an observation of {expected} values "
+                    f"but arms {arms} build one of {width}. The arms.json beside "
+                    f"the model is missing or wrong: {resolved.parent / 'arms.json'}"
+                )
             self.models.append({
                 "label": label,
                 "path": resolved.resolve(strict=True),
                 "arms": arms,
-                "model": PPO.load(resolved, device="cpu"),
+                "model": model,
             })
         if not self.models:
             self.model_error = (
