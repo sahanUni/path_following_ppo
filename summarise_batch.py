@@ -217,9 +217,33 @@ def main() -> None:
         prize = (oracle_done - best_single_done) / n
         print(f"  the entire prize for per-episode gain selection: "
               f"{prize:+.3f} ({oracle_done - best_single_done} episodes)")
+        # Beating the oracle is the ONE claim the data supports, so it gets a
+        # paired test rather than a raw count. The oracle is not a deployable
+        # controller -- it needs hindsight -- but it is the right upper bound
+        # for anything choosing one gain per episode, so "beats it" is a
+        # meaningful statement provided the margin survives a test.
+        print(f"\n  policy versus the oracle, per seed (paired)")
+        print(f"{'seed':>10}{'PPO':>8}{'oracle':>9}{'PPO only':>10}"
+              f"{'oracle only':>13}{'p':>9}")
+        for path, row in zip(files, per_seed):
+            seed_data, _ = load_confirmation(path)
+            ppo_seed = seed_data["PPO"]
+            beats = sum(
+                1 for s in scenarios
+                if ppo_seed[s]["finished"]
+                and not any(seed_data[nm][s]["finished"] for nm in fixed_names)
+            )
+            loses = sum(
+                1 for s in scenarios
+                if not ppo_seed[s]["finished"]
+                and any(seed_data[nm][s]["finished"] for nm in fixed_names)
+            )
+            print(f"{row['seed']:>10}{row['ppo_done']:>8}{oracle_done:>9}"
+                  f"{beats:>10}{loses:>13}{exact_binomial(beats, loses):>9.4f}")
+
         best_ppo = max(r["ppo_done"] for r in per_seed)
         print(f"  best PPO seed            : {best_ppo}/{n}"
-              + ("  <- beats the oracle, so it is varying gain WITHIN episodes"
+              + ("  <- above the oracle; only within-episode variation reaches this"
                  if best_ppo > oracle_done else ""))
         if prize < 0.03:
             print("  NOTE: the prize is small. A policy that selects one gain per")
