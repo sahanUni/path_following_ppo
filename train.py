@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import torch
@@ -45,6 +46,26 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--preview",
+        action="store_true",
+        help=(
+            "Add signed path curvature at several distances ahead to the "
+            "observation. TASK information, not privileged -- a deployed robot "
+            "knows its own planned path. Tests whether the agent acts on a "
+            "corner before reaching it."
+        ),
+    )
+    parser.add_argument(
+        "--plant-context",
+        action="store_true",
+        help=(
+            "Add the hidden plant parameters (mass, friction, actuator, dead "
+            "time, sensor noise) to the observation. This is the privileged "
+            "teacher arm. Blind agents show corr(mean Kp, dead time) = +0.08, "
+            "i.e. no plant identification at all; this should move it."
+        ),
+    )
+    parser.add_argument(
         "--torch-threads",
         type=int,
         default=1,
@@ -81,6 +102,18 @@ def main() -> None:
         )
     calibration = GainCalibration.load(args.calibration)
     args.run_dir.mkdir(parents=True, exist_ok=True)
+    # Recorded beside the model because the observation width alone cannot
+    # identify the arm: preview and plant context add five values each, so a
+    # 175-wide observation is ambiguous between them. Downstream tools read
+    # this rather than guessing, and a mismatch would otherwise surface as an
+    # opaque shape error inside SB3.
+    (args.run_dir / "arms.json").write_text(
+        json.dumps(
+            {"preview": bool(args.preview), "plant_context": bool(args.plant_context)},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     gusts = not args.no_gusts
     delay = not args.no_delay
@@ -92,12 +125,20 @@ def main() -> None:
         f"sensor noise {'ON' if noise else 'DISABLED'}"
     )
 
+    arms = [
+        name for name, on in
+        (("preview", args.preview), ("plant-context", args.plant_context)) if on
+    ]
+    print(f"Observation: blind{' + ' + ' + '.join(arms) if arms else ' (no extra context)'}")
+
     env_kwargs = {
         "calibration": calibration,
         "training": True,
         "gusts": gusts,
         "delay": delay,
         "noise": noise,
+        "preview": args.preview,
+        "plant_context": args.plant_context,
     }
 
     validation_env = PathFollowingEnv(**env_kwargs)
@@ -138,6 +179,8 @@ def main() -> None:
                 eval_freq=args.eval_freq,
                 output_dir=args.run_dir,
                 seed=args.seed,
+                preview=args.preview,
+                plant_context=args.plant_context,
             ),
         ]
     )

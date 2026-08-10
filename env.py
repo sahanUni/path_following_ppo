@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from copy import deepcopy
+from functools import lru_cache
 import math
 from typing import Any
 
@@ -52,6 +53,23 @@ FRAME_FIELDS = (
     "steer_integrator_hold",
 )
 
+# The privileged block, appended once to the observation rather than repeated
+# in every history frame: these barely move within an episode, so ten copies
+# would be 50 dimensions of the same number. Mass is the exception -- a
+# mid-episode mass step changes it -- and reporting the CURRENT value means the
+# teacher sees that step the instant it happens, which is exactly the advantage
+# the comparison is meant to measure.
+CONTEXT_FIELDS = ("mass", "friction", "actuator", "actuator_delay_s", "sensor_noise_m")
+
+
+@lru_cache(maxsize=len(paths.CATALOGUE))
+def _curvature_for(path_key: str) -> np.ndarray:
+    """Curvature samples per path, built once. Every reset would rebuild them
+    otherwise, and a path is thousands of samples long."""
+    curvature = paths.curvature_of(paths.get(path_key))
+    curvature.setflags(write=False)
+    return curvature
+
 
 def tracking_cost_of(distances: Any) -> float:
     """Mean saturating cost of being this far off the path, bounded in [0, 1).
@@ -80,6 +98,8 @@ class PathFollowingEnv(gym.Env[np.ndarray, np.ndarray]):
         gusts: bool = True,
         delay: bool = True,
         noise: bool = True,
+        preview: bool = False,
+        plant_context: bool = False,
     ) -> None:
         super().__init__()
         self.calibration = calibration or GainCalibration.development_default()
@@ -104,8 +124,19 @@ class PathFollowingEnv(gym.Env[np.ndarray, np.ndarray]):
         if self.fixed_gains is not None and self.fixed_gains.shape != (3,):
             raise ValueError("fixed_gains must contain [Kp, Ki, Kd]")
 
+        # Both default OFF, so every existing artifact keeps its 170-dim
+        # observation and stays loadable. Turning either on changes the
+        # observation size, which makes a model trained with it incompatible
+        # with one trained without -- that is intended, they are separate arms.
+        self.preview = bool(preview)
+        self.plant_context = bool(plant_context)
+
         self.action_space = spaces.Box(-1.0, 1.0, shape=(3,), dtype=np.float32)
         obs_size = len(FRAME_FIELDS) * config.HISTORY_LENGTH
+        if self.preview:
+            obs_size += len(config.PREVIEW_DISTANCES_M)
+        if self.plant_context:
+            obs_size += len(CONTEXT_FIELDS)
         self.observation_space = spaces.Box(
             -1.0, 1.0, shape=(obs_size,), dtype=np.float32
         )
@@ -239,6 +270,7 @@ class PathFollowingEnv(gym.Env[np.ndarray, np.ndarray]):
         self.stage = int(episode["stage"])
         self.path_key = str(episode["path_key"])
         self.path = paths.get(self.path_key)
+        self._path_curvature = _curvature_for(self.path_key)
         self.v_target = float(episode["v_target"])
         self.mass = float(episode["mass"])
         self.friction = float(episode["friction"])
@@ -483,8 +515,46 @@ class PathFollowingEnv(gym.Env[np.ndarray, np.ndarray]):
         )
         return np.clip(values, -1.0, 1.0)
 
+    def _preview_block(self) -> np.ndarray:
+        """Signed curvature ahead, normalised and clipped.
+
+        Task information, not privileged: a deployed robot knows its planned
+        path. Read from the car's CURRENT arc length, so it advances with the
+        vehicle rather than being fixed at reset.
+        """
+        kappa = paths.preview_at(
+            self.path,
+            self._path_curvature,
+            float(self.path["s"][self.path_index]),
+            config.PREVIEW_DISTANCES_M,
+        )
+        return np.clip(kappa / config.CURVATURE_SCALE, -1.0, 1.0)
+
+    def _context_block(self) -> np.ndarray:
+        """The hidden plant parameters, for the privileged arm only.
+
+        Mass is read from the live model, not the episode's base value, so a
+        mid-episode mass step is visible immediately.
+        """
+        values = np.array(
+            [
+                float(self.model.body_mass[car_id()]) / config.CONTEXT_MASS_SCALE_KG,
+                self.friction / config.CONTEXT_FRICTION_SCALE,
+                self.actuator / config.CONTEXT_ACTUATOR_SCALE,
+                self.actuator_delay_s / max(config.CONTEXT_DELAY_SCALE_S, 1e-9),
+                self.sensor_noise_m / max(config.CONTEXT_NOISE_SCALE_M, 1e-9),
+            ],
+            dtype=np.float32,
+        )
+        return np.clip(values, -1.0, 1.0)
+
     def _observation(self) -> np.ndarray:
-        return np.concatenate(tuple(self._history)).astype(np.float32, copy=False)
+        blocks = [np.concatenate(tuple(self._history))]
+        if self.preview:
+            blocks.append(self._preview_block())
+        if self.plant_context:
+            blocks.append(self._context_block())
+        return np.concatenate(blocks).astype(np.float32, copy=False)
 
     def _base_info(self, state: TrackState) -> dict[str, Any]:
         return {

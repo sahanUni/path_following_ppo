@@ -102,9 +102,16 @@ class DevelopmentEvalCallback(BaseCallback):
         eval_freq: int,
         output_dir: Path,
         seed: int,
+        preview: bool = False,
+        plant_context: bool = False,
     ) -> None:
         super().__init__(verbose=1)
         self.calibration = calibration
+        # Must mirror the training env's observation arms exactly: the model
+        # cannot consume an observation of a different width, and the failure
+        # would only appear at the first evaluation, long into a run.
+        self.preview = bool(preview)
+        self.plant_context = bool(plant_context)
         self.eval_freq = max(int(eval_freq), 1)
         self.output_dir = output_dir
         self.seed = int(seed)
@@ -131,6 +138,8 @@ class DevelopmentEvalCallback(BaseCallback):
             calibration=self.calibration,
             training=False,
             path_keys=path_keys,
+            preview=self.preview,
+            plant_context=self.plant_context,
         )
 
         def policy(observation: np.ndarray) -> np.ndarray:

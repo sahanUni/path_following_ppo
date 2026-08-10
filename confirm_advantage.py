@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from math import comb
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,27 @@ from calibration import GainCalibration
 import config
 from env import PathFollowingEnv
 from rollout import fixed_policy, run_episode
+
+
+def resolve_arms(model_path: Path, override: dict[str, bool] | None = None) -> dict[str, bool]:
+    """Which observation arms the model was trained with.
+
+    Read from the `arms.json` train.py writes beside the model, because the
+    observation width cannot identify them on its own: preview and plant
+    context add five values each, so 175 is ambiguous between the two. Getting
+    this wrong produces an opaque shape error deep inside SB3, so it is
+    resolved explicitly and printed.
+    """
+    if override is not None:
+        return override
+    manifest = model_path.parent / "arms.json"
+    if manifest.exists():
+        loaded = json.loads(manifest.read_text(encoding="utf-8"))
+        return {
+            "preview": bool(loaded.get("preview", False)),
+            "plant_context": bool(loaded.get("plant_context", False)),
+        }
+    return {"preview": False, "plant_context": False}
 
 
 def sample_scenarios(count: int, seed: int, paths: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -66,12 +88,16 @@ def run_one(
     options: dict[str, Any],
     model: PPO | None = None,
     gains: np.ndarray | None = None,
+    arms: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
+    arms = arms or {"preview": False, "plant_context": False}
     env = PathFollowingEnv(
         calibration=calibration,
         training=False,
         path_keys=(options["path_key"],),
         fixed_gains=gains,
+        preview=arms["preview"],
+        plant_context=arms["plant_context"],
     )
 
     def ppo_policy(observation: np.ndarray) -> np.ndarray:
@@ -145,13 +171,28 @@ def main() -> None:
     args = parse_args()
     calibration = GainCalibration.load(args.calibration)
     model = PPO.load(args.model, device="cpu")
+    arms = resolve_arms(args.model)
+    expected = model.observation_space.shape[0]
+    probe = PathFollowingEnv(
+        calibration=calibration, training=False,
+        preview=arms["preview"], plant_context=arms["plant_context"],
+    )
+    actual = probe.observation_space.shape[0]
+    probe.close()
+    if actual != expected:
+        raise SystemExit(
+            f"observation mismatch: the model expects {expected} values, the "
+            f"environment with arms {arms} produces {actual}. Check "
+            f"{args.model.parent / 'arms.json'}."
+        )
     scenarios = sample_scenarios(args.episodes, args.scenario_seed, config.TRAIN_PATHS)
     print(
         f"{len(scenarios)} scenarios sampled from the stage-3 training "
         f"distribution (seed {args.scenario_seed})"
     )
     print(f"model:       {args.model}")
-    print(f"calibration: {args.calibration}  base={calibration.base.round(3).tolist()}\n")
+    print(f"calibration: {args.calibration}  base={calibration.base.round(3).tolist()}")
+    print(f"arms:        {arms}  (observation width {expected})\n")
 
     controllers: list[tuple[str, np.ndarray | None]] = [
         ("PPO", None),
@@ -167,7 +208,7 @@ def main() -> None:
         outcomes = []
         for index, scenario in enumerate(scenarios, start=1):
             outcomes.append(
-                run_one(calibration, scenario, model=model, gains=gains)
+                run_one(calibration, scenario, model=model, gains=gains, arms=arms)
             )
             if index % 50 == 0:
                 print(f"  {name}: {index}/{len(scenarios)}", flush=True)

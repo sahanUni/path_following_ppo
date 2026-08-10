@@ -224,6 +224,40 @@ CURRICULUM_NOMINAL_END = 0.20
 # roughly 10% of it -- far too little to learn a condition-dependent gain rule.
 CURRICULUM_RANDOMIZED_END = 0.40
 
+# --- Observation arms --------------------------------------------------------
+#
+# Two extra observation blocks, kept SEPARATE on purpose. They answer different
+# questions and blurring them would make the result unattributable:
+#
+#   preview       -- signed path curvature at a few distances ahead. This is
+#                    TASK information and is NOT privileged: a deployed robot
+#                    knows its own planned path. Tests whether the agent can act
+#                    on a corner before reaching it.
+#   plant context -- the hidden physical parameters. Genuinely privileged: a
+#                    real robot does not know its own dead time. This is the
+#                    teacher side of the teacher/student comparison.
+#
+# The blind agent's measured correlation between its mean episode Kp and the
+# episode's dead time is +0.08 -- it is not identifying the plant at all, it is
+# reacting within the episode. A context agent should push that strongly
+# negative, and that is the prediction this arm exists to test.
+#
+# Lookahead distances in metres. At 0.7 m/s these span 0.36 s to 4.3 s ahead;
+# at 0.3 m/s, 0.8 s to 10 s. The near ones matter for fillet corners, the far
+# ones for the long bends on spiral and figure8.
+PREVIEW_DISTANCES_M = (0.25, 0.5, 1.0, 2.0, 3.0)
+# Tightest catalogue radius the car can actually drive is ~0.15 m (the corner
+# fillet), so curvature reaches about 6.7 1/m. Normalising by that keeps the
+# usual range inside [-1, 1] without clipping every corner flat.
+CURVATURE_SCALE = 6.7
+
+# Normalizers for the privileged block. Each maps its range to roughly [0, 1].
+CONTEXT_MASS_SCALE_KG = MASS_RANGE_KG[1]
+CONTEXT_FRICTION_SCALE = FRICTION_RANGE[1]
+CONTEXT_ACTUATOR_SCALE = ACTUATOR_RANGE[1]
+CONTEXT_DELAY_SCALE_S = ACTUATOR_DELAY_RANGE_S[1]
+CONTEXT_NOISE_SCALE_M = SENSOR_NOISE_RANGE_M[1]
+
 # Fixed normalizers keep evaluation independent from training statistics.
 E_CT_SCALE_M = 1.0
 E_CT_RATE_SCALE_MPS = 2.0

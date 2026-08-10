@@ -362,6 +362,42 @@ SHARP = {"zigzag", "square", "zigzag60", "zigzag30", "needle"}
 IMPOSSIBLE = {"needle"}
 
 
+def curvature_of(path):
+    """Signed curvature per sample, in 1/m. Positive means the path bends left.
+
+    Taken from the ANALYTIC tangents rather than by differencing the points
+    twice. The tangents are exact at segment joins, and a numeric second
+    derivative would smear a curvature reversal across the join -- which is
+    precisely the instant a preview is most worth having.
+
+    Curvature is a step function on this catalogue (arcs and lines chained
+    together), so the value at a join is genuinely ambiguous; the forward
+    difference used here reports the curvature of the segment being ENTERED,
+    which is the one a lookahead should warn about.
+    """
+    tangent = path["tangent"]
+    heading = np.arctan2(tangent[:, 1], tangent[:, 0])
+    delta = np.diff(heading)
+    delta = (delta + np.pi) % (2.0 * np.pi) - np.pi  # unwrap per step
+    step = np.diff(path["s"])
+    kappa = np.zeros(len(heading))
+    good = step > 1e-9
+    kappa[:-1][good] = delta[good] / step[good]
+    kappa[-1] = kappa[-2] if len(kappa) > 1 else 0.0
+    return kappa
+
+
+def preview_at(path, kappa, s_now, distances):
+    """Curvature a set of distances ahead along the path.
+
+    Past the end of the path the last value is held rather than wrapped or
+    zeroed: a car near the finish should not see a phantom straight.
+    """
+    targets = np.asarray(s_now, dtype=np.float64) + np.asarray(distances, dtype=np.float64)
+    index = np.searchsorted(path["s"], np.clip(targets, 0.0, path["s"][-1]))
+    return kappa[np.clip(index, 0, len(kappa) - 1)]
+
+
 def get(key):
     """Build a path by menu key. Unknown keys fall back to the default rather
     than raising -- a stale value in the browser's UI state must not 500."""

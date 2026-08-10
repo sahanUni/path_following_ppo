@@ -163,6 +163,33 @@ python run_seeds.py --seeds 7,21,42 --calibration runs/calibration_v7.json \
 That is 21 cores on four arms that all feed the write-up. Every batch drops a
 `batch_manifest.json` recording seeds, artifact, flags, and machine.
 
+### The observation arms (RQ2)
+
+Kept separate so the effect is attributable. `preview` is TASK information and
+is not privileged -- a deployed robot knows its own planned path. `plant
+context` is genuinely privileged: a real robot does not know its own dead time.
+Blurring them would let a reviewer object that the "privileged" agent mostly won
+on information that was not privileged.
+
+```bash
+python run_seeds.py --seeds 7,21,42,84,123 --calibration runs/calibration_v7.json \
+  --run-root runs/rq2_preview --extra "--preview" &
+python run_seeds.py --seeds 7,21,42,84,123 --calibration runs/calibration_v7.json \
+  --run-root runs/rq2_context --extra "--plant-context" &
+python run_seeds.py --seeds 7,21,42,84,123 --calibration runs/calibration_v7.json \
+  --run-root runs/rq2_both --extra "--preview --plant-context" &
+```
+
+Each arm changes the observation width, so its models are not interchangeable
+with the blind ones. `train.py` writes `arms.json` beside each model and
+`confirm_advantage.py` reads it, because the width alone is ambiguous -- preview
+and plant context add five values each, so 175 could be either. A mismatch is
+caught and reported rather than surfacing as a shape error inside SB3.
+
+The prediction worth checking first: blind agents show
+`corr(mean episode Kp, dead time) = +0.08`, i.e. no plant identification at all.
+The context arm should push that clearly negative.
+
 Only reach for `SubprocVecEnv` when a SINGLE run must be fast -- the
 direct-control agent, most likely, where the budget is large and there is only
 one of it. Three things need fixing first, none of which matter today:
