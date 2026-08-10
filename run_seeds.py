@@ -30,6 +30,20 @@ import time
 PROJECT = Path(__file__).resolve().parent
 
 
+def usable_cores() -> int:
+    """Cores this process may actually run on, not the ones the box has.
+
+    Under SLURM (or any cgroup/affinity limit) `os.cpu_count()` reports the
+    whole compute node -- 128 on a machine where the allocation is 6 -- so a
+    batch sized from it looks healthy and then crawls, four processes deep on
+    every core. The affinity mask is what the scheduler actually granted.
+    """
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:  # not Linux
+        return os.cpu_count() or 1
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seeds", type=str, default="7,21,42,84,123")
@@ -88,7 +102,10 @@ def main() -> None:
         "extra_args": extra,
         "threads_per_job": args.threads_per_job,
         "concurrent_jobs": jobs,
+        "usable_cores": usable_cores(),
         "cpu_count": os.cpu_count(),
+        "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+        "slurm_cpus_per_task": os.environ.get("SLURM_CPUS_PER_TASK"),
         "python": sys.version.split()[0],
         "platform": sys.platform,
     }
@@ -138,8 +155,18 @@ def main() -> None:
         )
         running.append((seed, process, log_path, time.time()))
 
+    cores = usable_cores()
+    wanted = jobs * args.threads_per_job
     print(f"\n{len(seeds)} seeds, {jobs} at a time, "
-          f"{args.threads_per_job} thread(s) each, on {os.cpu_count()} cores\n")
+          f"{args.threads_per_job} thread(s) each = {wanted} threads "
+          f"on {cores} usable core(s)\n")
+    if wanted > cores:
+        print(
+            f"  WARNING: asking for {wanted} threads with only {cores} cores "
+            "available. Runs will contend and each will be slower than it "
+            "would be alone. Lower --jobs, or request more cores from the "
+            "scheduler.\n"
+        )
     while pending or running:
         while pending and len(running) < jobs:
             launch(pending.pop(0))

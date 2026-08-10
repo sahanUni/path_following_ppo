@@ -64,6 +64,57 @@ is not rounding and is worth investigating.
 deciles look like the laptop's. Do not expect identical numbers -- different
 BLAS makes training trajectories diverge even from the same seed.
 
+## 2b. This is a SLURM cluster
+
+`sinfo -s` shows one partition, `base`, 48 nodes, no time limit. `login01` is
+for editing and submitting only -- never for training. It is also tightly capped
+on threads per user, which is what makes `uv` fall over with
+`failed to initialize global rayon pool` unless `RAYON_NUM_THREADS` is small.
+
+Two ways to run, both fine. Neither needs you to stay connected.
+
+**Interactive, inside tmux.** The allocation lives on a compute node; tmux keeps
+it alive across disconnects:
+
+```bash
+tmux new -s pf
+srun --partition=base --cpus-per-task=6 --mem=16G --time=12:00:00 --pty bash
+# now on a compute node
+cd ~/path_following_ppo && source venv/bin/activate
+python run_seeds.py --seeds 7,21,42,84,123 --total-timesteps 1000000 \
+  --calibration runs/calibration_v7.json --run-root runs/rq1_blind
+# Ctrl-b then d to detach; tmux attach -t pf to return
+```
+
+Good for watching the first run and catching a mistake early. The catch: if the
+tmux session dies, the allocation and the runs die with it.
+
+**Batch, fire and forget.** `slurm_batch.sh` runs the seeds and then the paired
+confirmation for each:
+
+```bash
+sbatch slurm_batch.sh
+squeue -u $USER
+tail -f slurm-pf-rq1-<jobid>.out
+```
+
+Survives everything, including tmux dying. Override anything via `--export`:
+
+```bash
+sbatch --export=ALL,RUN_ROOT=runs/rq1_clean,EXTRA="--no-delay --no-noise" \
+  --job-name=pf-clean slurm_batch.sh
+```
+
+### Core budget
+
+`--cpus-per-task=6` for five seeds: one core each plus slack. Asking for a whole
+node would not finish sooner -- the seeds already run concurrently, so the extra
+cores would sit idle. Scale it with the seed count, not with what is available.
+
+Note that `os.cpu_count()` inside a job reports the whole compute node, not the
+allocation, so `run_seeds.py` uses `os.sched_getaffinity` instead and warns when
+the requested threads exceed the granted cores.
+
 ## 3. Launch a batch
 
 ```bash
