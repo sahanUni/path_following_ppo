@@ -149,13 +149,19 @@ class DirectComparisonRunner:
     # (label, path) tried in order. The two arms are shown side by side because
     # the whole point of the comparison is that they behave differently despite
     # one of them being handed the plant parameters outright.
-    MODEL_CANDIDATES = (
+    PREFERRED_MODELS = (
         ("PPO (blind)", Path("runs") / "rq1_blind" / "seed21" / "best_model.zip"),
         ("PPO (context)", Path("runs") / "rq2_context" / "seed42" / "best_model.zip"),
+    )
+    # Used only when NONE of the preferred ones are present. Otherwise a stale
+    # single-arm model would sit alongside the two arms as a third panel and
+    # muddle the comparison the dashboard exists to show.
+    FALLBACK_MODELS = (
         ("PPO", Path("runs") / "v7_seed7" / "final_model.zip"),
         ("PPO", Path("runs") / "development" / "best_model.zip"),
     )
-    DEFAULT_MODEL = MODEL_CANDIDATES[0][1]
+    MODEL_CANDIDATES = PREFERRED_MODELS + FALLBACK_MODELS
+    DEFAULT_MODEL = PREFERRED_MODELS[0][1]
     # The dashboard is useful before a model exists -- the whole left panel is
     # hand-tuning against the live plant -- so a missing model is a degraded
     # mode, not an error. A missing calibration is fatal: there would be no
@@ -260,7 +266,11 @@ class DirectComparisonRunner:
                     path = Path(text)
                     out.append((f"{path.parent.parent.name} {path.parent.name}".strip(), path))
             return out
-        return list(self.MODEL_CANDIDATES)
+        preferred = [
+            (label, path) for label, path in self.PREFERRED_MODELS
+            if (self.project_dir / path).exists()
+        ]
+        return preferred or list(self.FALLBACK_MODELS)
 
     def _resolve_calibration(self, calibration_path: str | Path | None) -> Path:
         return resolve_calibration(self.project_dir, calibration_path)
