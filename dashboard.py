@@ -1342,6 +1342,13 @@ def create_app(
         State("s-gain-kp", "value"),
         State("s-gain-ki", "value"),
         State("s-gain-kd", "value"),
+        State("mass-enabled", "value"),
+        State("s-mass-target", "value"),
+        State("s-mass-time", "value"),
+        State("force-enabled", "value"),
+        State("s-force", "value"),
+        State("s-force-start", "value"),
+        State("s-force-end", "value"),
         State("gust-enabled", "value"),
         State("s-gust", "value"),
         State("s-gust-tau", "value"),
@@ -1351,8 +1358,10 @@ def create_app(
     )
     def launch_replay(
         _fixed_clicks, _model_clicks, path_key, speed, mass, friction, actuator,
-        delay_ms, noise_mm, kp, ki, kd, gust_values, gust, gust_tau,
-        gust_start, gust_end,
+        delay_ms, noise_mm, kp, ki, kd,
+        mass_values, mass_target, mass_time,
+        force_values, force, force_start, force_end,
+        gust_values, gust, gust_tau, gust_start, gust_end,
     ):
         triggered = ctx.triggered_id
         entry = None
@@ -1377,6 +1386,21 @@ def create_app(
         ]
         if entry is not None:
             command += ["--model", str(entry["path"])]
+        # Every armed event, not only the gust. Sending a subset meant the
+        # viewer replayed a different episode from the one plotted -- a mass
+        # step that put all three controllers out of the corridor on the charts
+        # simply never happened in the window.
+        if "on" in (mass_values or []):
+            command += [
+                "--mass-target", str(float(mass_target)),
+                "--mass-time", str(float(mass_time)),
+            ]
+        if "on" in (force_values or []):
+            command += [
+                "--force", str(float(force)),
+                "--force-start", str(float(force_start)),
+                "--force-end", str(float(force_end)),
+            ]
         if "on" in (gust_values or []):
             command += [
                 "--gust", str(float(gust)),

@@ -22,6 +22,8 @@ def scenario(**overrides) -> argparse.Namespace:
         controller="fixed", path_key="zigzag", speed=0.7, mass=10.0,
         friction=1.0, actuator=1.0, delay_ms=60.0, noise_mm=0.3,
         gust=8.0, gust_tau=1.0, gust_start=0.0, gust_end=1e9,
+        mass_target=0.0, mass_time=3.0,
+        force=0.0, force_start=3.0, force_end=8.0,
         gains="26,0.5,4.4", calibration=None, model=None,
         playback=1.0, loop=False,
     )
@@ -63,6 +65,67 @@ class ReplayMatchesTheDashboardTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["duration_s"], panel["duration_s"], places=9)
         self.assertEqual(len(frames), len(winds))
         self.assertEqual(len(frames), len(result["fixed"]["trace"]) + 1)
+
+    def test_mid_episode_events_reach_the_replay(self):
+        """The viewer once accepted only the gust, so a mass step that put every
+        controller out of the corridor on the charts simply never happened in
+        the window -- the car sailed round and the two silently disagreed."""
+        base = replay.simulate(scenario(gust=0.0), PROJECT)[0]
+        heavy = replay.simulate(
+            scenario(gust=0.0, mass_target=50.0, mass_time=1.0), PROJECT
+        )[0]
+        self.assertNotAlmostEqual(
+            base["mean_distance_m"], heavy["mean_distance_m"], places=6,
+            msg="the mass step did not reach the simulation",
+        )
+        pushed = replay.simulate(
+            scenario(gust=0.0, force=-20.0, force_start=1.0, force_end=4.0), PROJECT
+        )[0]
+        self.assertNotAlmostEqual(
+            base["mean_distance_m"], pushed["mean_distance_m"], places=6,
+            msg="the force pulse did not reach the simulation",
+        )
+
+    def test_a_mass_step_replays_exactly_as_the_dashboard_ran_it(self):
+        from dashboard import DirectComparisonRunner
+
+        runner = DirectComparisonRunner(PROJECT)
+        result = runner.compare(
+            "arc", 0.5, mass_enabled=True, mass_target=45.0, mass_time=2.0,
+            delay_ms=60.0, noise_mm=0.3,
+        )
+        base = runner.calibration.base
+        args = scenario(
+            path_key="arc", speed=0.5, gust=0.0,
+            mass_target=45.0, mass_time=2.0,
+            delay_ms=60.0, noise_mm=0.3,
+            gains=f"{base[0]},{base[1]},{base[2]}",
+            calibration=runner.calibration_path,
+        )
+        metrics = replay.simulate(args, PROJECT)[0]
+        panel = result["fixed"]["metrics"]
+        self.assertEqual(metrics["finished"], panel["finished"])
+        self.assertAlmostEqual(
+            metrics["mean_distance_m"], panel["mean_distance_m"], places=9
+        )
+
+    def test_a_context_model_gets_a_context_environment(self):
+        """A plant-context policy needs a 175-wide observation. Building a blind
+        environment for it raised a shape error inside predict(), and because
+        the viewer runs detached the window simply never appeared."""
+        from dashboard import DirectComparisonRunner
+
+        runner = DirectComparisonRunner(PROJECT)
+        context = [m for m in runner.models if m["arms"]["plant_context"]]
+        if not context:
+            self.skipTest("no plant-context model available")
+        args = scenario(
+            controller="ppo", gust=0.0,
+            model=context[0]["path"], calibration=runner.calibration_path,
+        )
+        metrics, frames, _winds, _options, _cal, _gains = replay.simulate(args, PROJECT)
+        self.assertGreater(len(frames), 10)
+        self.assertIn("mean_distance_m", metrics)
 
     def test_the_recorded_wind_is_the_wind_the_car_felt(self):
         args = scenario()

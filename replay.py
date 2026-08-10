@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import time
+from typing import Any
 
 import mujoco
 import mujoco.viewer
@@ -28,6 +29,7 @@ import numpy as np
 
 from calibration import GainCalibration
 import config
+from confirm_advantage import resolve_arms
 from core import paths
 from core.dynamics import car_id, fresh_model
 from env import PathFollowingEnv
@@ -59,6 +61,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gust-tau", type=float, default=config.EVAL_GUST_TAU_S)
     parser.add_argument("--gust-start", type=float, default=0.0)
     parser.add_argument("--gust-end", type=float, default=1e9)
+    # Mid-episode events. Without these the viewer silently replayed a DIFFERENT
+    # episode from the one plotted: a mass step that made every controller leave
+    # the corridor on the charts simply never happened in the window, so the car
+    # sailed round and the two disagreed with no indication why.
+    parser.add_argument(
+        "--mass-target", type=float, default=0.0,
+        help="Absolute mass to switch to mid-episode. 0 disables the event.",
+    )
+    parser.add_argument("--mass-time", type=float, default=3.0)
+    parser.add_argument(
+        "--force", type=float, default=0.0,
+        help="Vehicle-relative lateral pulse in N. 0 disables the event.",
+    )
+    parser.add_argument("--force-start", type=float, default=3.0)
+    parser.add_argument("--force-end", type=float, default=8.0)
     parser.add_argument("--gains", type=str, default=None, help="Kp,Ki,Kd")
     parser.add_argument("--calibration", type=Path, default=None)
     parser.add_argument("--model", type=Path, default=None)
@@ -82,6 +99,11 @@ def simulate(args: argparse.Namespace, project: Path):
     calibration = GainCalibration.load(resolve_calibration(project, args.calibration))
     gains = None
     policy = None
+    # A plant-context policy consumes a 175-wide observation; a blind one 170.
+    # Without this the viewer built a blind environment for every model, so a
+    # context model raised a shape error inside predict() and the subprocess
+    # died before the window ever opened -- silently, since it runs detached.
+    arms = {"preview": False, "plant_context": False}
     if args.controller == "fixed":
         gains = calibration.base.copy()
         if args.gains:
@@ -96,21 +118,40 @@ def simulate(args: argparse.Namespace, project: Path):
         if not model_path.exists():
             raise SystemExit(f"No PPO model at {model_path}")
         model = PPO.load(model_path, device="cpu")
+        arms = resolve_arms(model_path.resolve())
 
         def policy(observation: np.ndarray) -> np.ndarray:
             action, _ = model.predict(observation, deterministic=True)
             return np.asarray(action, dtype=np.float32)
 
-    disturbances = [{"kind": "none", "start_s": 0.0, "end_s": None, "amount": 0.0}]
+    # Built in the same order as the dashboard's compare(), because the two must
+    # produce the identical episode.
+    disturbances: list[dict[str, Any]] = []
+    if args.mass_target > 0.0:
+        disturbances.append({
+            "kind": "mass_step",
+            "start_s": args.mass_time,
+            "end_s": None,
+            "amount": args.mass_target,
+        })
+    if args.force != 0.0:
+        disturbances.append({
+            "kind": "force_pulse",
+            "start_s": args.force_start,
+            "end_s": args.force_end,
+            "amount": args.force,
+        })
     if args.gust > 0.0:
-        disturbances = [{
+        disturbances.append({
             "kind": "force_gust",
             "start_s": args.gust_start,
             "end_s": None if args.gust_end >= 1e8 else args.gust_end,
             "amount": args.gust,
             "tau_s": args.gust_tau,
             "seed": config.SEED,
-        }]
+        })
+    if not disturbances:
+        disturbances = [{"kind": "none", "start_s": 0.0, "end_s": None, "amount": 0.0}]
 
     options = {
         "path_key": args.path_key,
@@ -130,6 +171,8 @@ def simulate(args: argparse.Namespace, project: Path):
         training=False,
         path_keys=(args.path_key,),
         fixed_gains=gains,
+        preview=arms["preview"],
+        plant_context=arms["plant_context"],
     )
     frames: list[np.ndarray] = []
     winds: list[np.ndarray] = []
