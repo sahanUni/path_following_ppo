@@ -39,8 +39,11 @@ def exact_binomial(wins: int, losses: int) -> float:
     return min(1.0, 2.0 * tail)
 
 
-def load_confirmation(path: Path) -> dict[str, dict[int, dict[str, Any]]]:
+def load_confirmation(path: Path) -> tuple[
+    dict[str, dict[int, dict[str, Any]]], dict[int, dict[str, float]]
+]:
     by_controller: dict[str, dict[int, dict[str, Any]]] = {}
+    scenarios: dict[int, dict[str, float]] = {}
     for row in csv.DictReader(path.open(encoding="utf-8")):
         scenario = int(row["scenario"])
         by_controller.setdefault(row["controller"], {})[scenario] = {
@@ -48,7 +51,37 @@ def load_confirmation(path: Path) -> dict[str, dict[int, dict[str, Any]]]:
             "distance": float(row["mean_distance_m"]),
             "mean_kp": float(row["mean_kp"]),
         }
-    return by_controller
+        scenarios[scenario] = {
+            "delay": float(row["actuator_delay_s"]),
+            "mass": float(row["mass"]),
+            "friction": float(row["friction"]),
+            "noise": float(row["sensor_noise_m"]),
+        }
+    return by_controller, scenarios
+
+
+def scheduling_correlations(
+    ppo: dict[int, dict[str, Any]], scenarios: dict[int, dict[str, float]]
+) -> dict[str, float]:
+    """Does the episode's chosen gain track the episode's hidden parameters?
+
+    This is what separates a scheduler from a policy that found a good constant.
+    A blind agent that has genuinely inferred the plant should lower its gain
+    when dead time is high -- a clearly NEGATIVE correlation. Near zero means it
+    is picking much the same gain whatever the plant is, and any advantage it
+    shows comes from where that constant sits rather than from adapting.
+    """
+    keys = sorted(ppo)
+    gains = np.array([ppo[k]["mean_kp"] for k in keys])
+    out: dict[str, float] = {}
+    for name in ("delay", "mass", "friction", "noise"):
+        values = np.array([scenarios[k][name] for k in keys])
+        if gains.std() < 1e-9 or values.std() < 1e-9:
+            out[name] = float("nan")
+        else:
+            out[name] = float(np.corrcoef(gains, values)[0, 1])
+    out["gain_spread"] = float(gains.max() - gains.min())
+    return out
 
 
 def baseline_name(controllers: list[str]) -> str:
@@ -84,7 +117,7 @@ def main() -> None:
 
     for path in files:
         seed = path.parent.name
-        data = load_confirmation(path)
+        data, scenario_meta = load_confirmation(path)
         controllers = list(data)
         base = baseline_name(controllers)
         ppo, fixed = data["PPO"], data[base]
@@ -113,6 +146,7 @@ def main() -> None:
             "ppo_cm": ppo_cm,
             "fixed_cm": fixed_cm,
             "mean_kp": np.mean([ppo[s]["mean_kp"] for s in scenarios]),
+            "corr": scheduling_correlations(ppo, scenario_meta),
         })
 
     base = baseline_name(controllers)
@@ -141,6 +175,20 @@ def main() -> None:
 
     significant = sum(1 for r in per_seed if r["p"] < 0.05)
     print(f"  seeds individually significant at 0.05: {significant}/{len(per_seed)}")
+
+    # Scheduling, not just performance. A policy that has inferred the plant
+    # lowers its gain when dead time is high; near-zero correlation with a
+    # narrow gain spread means it settled on a constant, and any advantage
+    # comes from where that constant landed rather than from adapting.
+    print(f"\nis it scheduling, or just picking a constant?")
+    print(f"{'seed':>8}{'corr Kp/delay':>15}{'corr Kp/mass':>14}"
+          f"{'Kp spread':>12}{'mean Kp':>9}")
+    for row in per_seed:
+        c = row["corr"]
+        print(f"{row['seed']:>8}{c['delay']:>15.2f}{c['mass']:>14.2f}"
+              f"{c['gain_spread']:>12.1f}{row['mean_kp']:>9.1f}")
+    print("  a scheduler should be clearly NEGATIVE on delay;"
+          " near zero means a constant")
 
     spread = rates.max() - rates.min()
     print(f"\n  seed-to-seed spread in PPO completion: {spread:.3f}")
