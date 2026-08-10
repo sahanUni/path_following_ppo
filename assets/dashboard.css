@@ -303,11 +303,19 @@ h1 { margin: 0 0 .2rem; font-size: 1.5rem; }
 
 /* --------------------------------------------------------- comparison */
 
+/* Auto-fit rather than a fixed two, because the panel count is now the number
+   of loaded controllers: Fixed PID plus however many models are supplied.
+   Three side by side needs a wide screen, so they wrap instead of squeezing
+   the trajectory plots down to nothing. */
 .comparison-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(30rem, 1fr));
   gap: 1.2rem;
   align-items: start;
+}
+
+@media (max-width: 64rem) {
+  .comparison-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 .comparison-panel {

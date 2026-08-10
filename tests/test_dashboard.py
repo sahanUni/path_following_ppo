@@ -23,10 +23,18 @@ from env import PathFollowingEnv
 
 def _require_model(project: Path) -> None:
     """These tests need a trained PPO artifact. Skip rather than fail when the
-    working tree simply has not produced one yet."""
-    model = project / DirectComparisonRunner.DEFAULT_MODEL
-    if not model.exists():
-        raise unittest.SkipTest(f"no trained model at {model}; run train.py first")
+    working tree simply has not produced one yet.
+
+    Checks every candidate, not one fixed path: the dashboard now loads a panel
+    per model it can find, so pinning this to DEFAULT_MODEL silently skipped
+    the whole class whenever the preferred run directory was absent -- which is
+    the normal state on a machine that has not copied the batch back.
+    """
+    if not any(
+        (project / path).exists()
+        for _label, path in DirectComparisonRunner.MODEL_CANDIDATES
+    ):
+        raise unittest.SkipTest("no trained model found; run train.py first")
 
 
 class DashboardTests(unittest.TestCase):
@@ -42,9 +50,9 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.result["path_key"], "arc")
         self.assertEqual(self.result["target_speed"], 0.3)
         self.assertGreater(len(self.result["fixed"]["trace"]), 0)
-        self.assertGreater(len(self.result["ppo"]["trace"]), 0)
-        for controller in ("fixed", "ppo"):
-            first = self.result[controller]["trace"][0]
+        self.assertTrue(all(len(m["trace"]) > 0 for m in self.result["models"]))
+        for panel in [self.result["fixed"], *self.result["models"]]:
+            first = panel["trace"][0]
             self.assertEqual(first["path_key"], "arc")
             self.assertEqual(first["v_target"], 0.3)
             self.assertEqual(first["base_mass"], 10.0)
@@ -212,10 +220,10 @@ class InteractiveTuningTests(unittest.TestCase):
         cls.runner = DirectComparisonRunner(cls.project)
 
     def test_the_dashboard_starts_without_a_trained_model(self):
-        if self.runner.model is not None:
+        if self.runner.models:
             self.skipTest("a model exists, so the degraded path cannot be exercised")
         result = self.runner.compare("arc", 0.3)
-        self.assertIsNone(result["ppo"])
+        self.assertEqual(result["models"], [])
         self.assertIn("train.py", self.runner.model_error)
         view = comparison_view(result, self.runner)
         self.assertIn("PPO", str(view))
@@ -256,7 +264,7 @@ class InteractiveTuningTests(unittest.TestCase):
         runner.compare("arc", 0.3, kp=20.0)
         runner.compare("arc", 0.3, kp=40.0)
         self.assertEqual(len(runner._fixed_cache), 2)
-        self.assertLessEqual(len(runner._ppo_cache), 1)
+        self.assertLessEqual(len(runner._model_cache), len(runner.models))
 
     def test_gain_defaults_are_the_calibrated_baseline(self):
         defaults = [control[5] for control in gain_controls(self.runner.calibration)]

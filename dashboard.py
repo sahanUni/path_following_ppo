@@ -11,13 +11,14 @@ import sys
 from threading import Lock
 from typing import Any
 
-from dash import Dash, Input, Output, State, ctx, dcc, html, no_update
+from dash import ALL, Dash, Input, Output, State, ctx, dcc, html, no_update
 import numpy as np
 import plotly.graph_objects as go
 from stable_baselines3 import PPO
 
 from calibration import GainCalibration
 import config
+from confirm_advantage import resolve_arms
 from core import paths
 from core.dynamics import CORRIDOR_M
 from env import PathFollowingEnv
@@ -28,6 +29,9 @@ INK, MUTED, ACCENT = "#e8ecf4", "#93a1b8", "#4fc3f7"
 PANEL, LINE = "#1a2233", "#2c3a57"
 GOOD, BAD, WARN = "#66d9a3", "#ff7a7a", "#ffce6b"
 PATH_COLOR, PPO_COLOR = "#8b97ad", "#c792ea"
+# One per model panel, in load order. Distinct enough to tell three
+# trajectories apart on the same corridor plot.
+MODEL_COLORS = ("#c792ea", "#ffb26b", "#6bd6c4")
 MASS_TINT, FORCE_TINT, GUST_TINT = "#ffce6b", "#c792ea", "#8fb8ff"
 EVENT_TINTS = {"mass_step": MASS_TINT, "force_pulse": FORCE_TINT, "force_gust": GUST_TINT}
 EVENT_LABELS = {
@@ -142,11 +146,16 @@ class DirectComparisonRunner:
     # error against 1.88 cm for the best tracker) and its box tops out at
     # Kp 2.25, far below where the plant is controllable. Loading it by default
     # would quietly show a broken baseline.
+    # (label, path) tried in order. The two arms are shown side by side because
+    # the whole point of the comparison is that they behave differently despite
+    # one of them being handed the plant parameters outright.
     MODEL_CANDIDATES = (
-        Path("runs") / "v7_seed7" / "final_model.zip",
-        Path("runs") / "development" / "best_model.zip",
+        ("PPO (blind)", Path("runs") / "rq1_blind" / "seed21" / "best_model.zip"),
+        ("PPO (context)", Path("runs") / "rq2_context" / "seed42" / "best_model.zip"),
+        ("PPO", Path("runs") / "v7_seed7" / "final_model.zip"),
+        ("PPO", Path("runs") / "development" / "best_model.zip"),
     )
-    DEFAULT_MODEL = MODEL_CANDIDATES[0]
+    DEFAULT_MODEL = MODEL_CANDIDATES[0][1]
     # The dashboard is useful before a model exists -- the whole left panel is
     # hand-tuning against the live plant -- so a missing model is a degraded
     # mode, not an error. A missing calibration is fatal: there would be no
@@ -169,42 +178,70 @@ class DirectComparisonRunner:
             raise ValueError("the configured PID calibration is not a JSON artifact")
         self.calibration = GainCalibration.load(self.calibration_path)
 
-        wanted_model = self.project_dir / (model_path or self.DEFAULT_MODEL)
-        if model_path is None:
-            wanted_model = next(
-                (
-                    self.project_dir / candidate
-                    for candidate in self.MODEL_CANDIDATES
-                    if (self.project_dir / candidate).exists()
-                ),
-                wanted_model,
-            )
-        self.model_path: Path | None = None
-        self.model = None
+        self.models: list[dict[str, Any]] = []
         self.model_error = ""
-        if wanted_model.exists():
-            if wanted_model.suffix.lower() != ".zip":
-                raise ValueError("the configured PPO model is not a ZIP artifact")
-            self.model_path = wanted_model.resolve(strict=True)
-            self.model = PPO.load(self.model_path, device="cpu")
-        elif model_path is not None:
-            # Explicitly asked for by name: a typo must not silently degrade
-            # into the no-model view.
-            raise FileNotFoundError(f"No PPO model at {wanted_model}")
-        else:
+        for label, path in self._wanted_models(model_path):
+            resolved = self.project_dir / path
+            if not resolved.exists():
+                if model_path is not None:
+                    # Explicitly asked for by name: a typo must not silently
+                    # degrade into a missing panel.
+                    raise FileNotFoundError(f"No PPO model at {resolved}")
+                continue
+            if resolved.suffix.lower() != ".zip":
+                raise ValueError(f"not a ZIP artifact: {resolved}")
+            # Each model carries its own observation arms. A blind model and a
+            # plant-context model need environments of different widths, so the
+            # arms travel with the model rather than being a global setting.
+            arms = resolve_arms(resolved.resolve())
+            self.models.append({
+                "label": label,
+                "path": resolved.resolve(strict=True),
+                "arms": arms,
+                "model": PPO.load(resolved, device="cpu"),
+            })
+        if not self.models:
             self.model_error = (
-                f"No PPO model at {wanted_model.relative_to(self.project_dir)}. "
-                "Train one, then reload:  python train.py "
+                "No PPO model found. Train one, then reload:  python train.py "
                 f"--calibration {self.calibration_path.name} --run-dir runs/development"
             )
 
-        # Two caches, because the panels have different dependencies: the Fixed
-        # PID re-runs whenever a gain slider moves, the PPO episode does not
-        # depend on those gains at all. One shared key would re-run the slow
-        # side on every keystroke.
+        # Separate caches, because the panels have different dependencies: the
+        # Fixed PID re-runs whenever a gain slider moves, and the model episodes
+        # do not depend on those gains at all. One shared key would re-run every
+        # slow panel on each keystroke.
         self._fixed_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
-        self._ppo_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
+        self._model_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
         self._lock = Lock()
+
+    @property
+    def model_path(self) -> Path | None:
+        """First loaded model, for callers that only need one (e.g. replay)."""
+        return self.models[0]["path"] if self.models else None
+
+    @property
+    def model(self):
+        return self.models[0]["model"] if self.models else None
+
+    def _wanted_models(
+        self, model_path: str | Path | None
+    ) -> list[tuple[str, Path]]:
+        if model_path is not None:
+            requested = [model_path] if isinstance(model_path, (str, Path)) else list(model_path)
+            out: list[tuple[str, Path]] = []
+            for item in requested:
+                text = str(item)
+                # "label=path" lets the caller name a panel; bare paths are
+                # named from the run directory, which is usually meaningful
+                # here (rq1_blind/seed21 -> "rq1_blind seed21").
+                if "=" in text and not Path(text).exists():
+                    label, _, raw = text.partition("=")
+                    out.append((label.strip(), Path(raw.strip())))
+                else:
+                    path = Path(text)
+                    out.append((f"{path.parent.parent.name} {path.parent.name}".strip(), path))
+            return out
+        return list(self.MODEL_CANDIDATES)
 
     def _resolve_calibration(self, calibration_path: str | Path | None) -> Path:
         return resolve_calibration(self.project_dir, calibration_path)
@@ -371,12 +408,14 @@ class DirectComparisonRunner:
                 fixed = self._run_episode(path_key, options, gains=gains)
                 self._fixed_cache[fixed_key] = fixed
 
-            ppo = None
-            if self.model is not None:
-                ppo = self._ppo_cache.get(scenario_key)
-                if ppo is None:
-                    ppo = self._run_episode(path_key, options, gains=None)
-                    self._ppo_cache[scenario_key] = ppo
+            models = []
+            for entry in self.models:
+                key = scenario_key + (str(entry["path"]),)
+                result = self._model_cache.get(key)
+                if result is None:
+                    result = self._run_episode(path_key, options, entry=entry)
+                    self._model_cache[key] = result
+                models.append({**result, "label": entry["label"], "arms": entry["arms"]})
 
         return {
             "path_key": path_key,
@@ -386,7 +425,7 @@ class DirectComparisonRunner:
             "delay_s": delay_s,
             "noise_m": noise_m,
             "fixed": fixed,
-            "ppo": ppo,
+            "models": models,
         }
 
     def _run_episode(
@@ -394,21 +433,25 @@ class DirectComparisonRunner:
         path_key: str,
         options: dict[str, Any],
         *,
-        gains: np.ndarray | None,
+        gains: np.ndarray | None = None,
+        entry: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """One episode. `gains` None means drive it with the PPO policy."""
+        """One episode: fixed gains, or the policy in `entry`."""
+        arms = entry["arms"] if entry else {"preview": False, "plant_context": False}
         env = PathFollowingEnv(
             calibration=self.calibration,
             training=False,
             path_keys=(path_key,),
             fixed_gains=gains,
+            preview=arms["preview"],
+            plant_context=arms["plant_context"],
         )
 
         def ppo_policy(observation: np.ndarray) -> np.ndarray:
-            action, _ = self.model.predict(observation, deterministic=True)
+            action, _ = entry["model"].predict(observation, deterministic=True)
             return np.asarray(action, dtype=np.float32)
 
-        policy = fixed_policy if gains is not None else ppo_policy
+        policy = fixed_policy if entry is None else ppo_policy
         try:
             metrics, trace = run_episode(
                 env, policy, seed=config.SEED, options=options
@@ -853,26 +896,26 @@ def comparison_view(result: dict[str, Any], runner: "DirectComparisonRunner") ->
             runner.calibration,
         )
     ]
-    if result["ppo"] is None:
+    if not result["models"]:
         panels.append(
             html.Section(
-                [
-                    html.H2("PPO"),
-                    html.Div(runner.model_error, className="message error"),
-                ],
+                [html.H2("PPO"), html.Div(runner.model_error, className="message error")],
                 className="comparison-panel",
             )
         )
-    else:
+    for index, entry in enumerate(result["models"]):
+        arms = entry["arms"]
+        sees = [
+            name for name, on in
+            (("path preview", arms["preview"]), ("plant context", arms["plant_context"]))
+            if on
+        ]
+        note = _gain_activity(entry["trace"])
+        note += "  ·  sees: " + (", ".join(sees) if sees else "error history only")
         panels.append(
             _panel(
-                "PPO",
-                _gain_activity(result["ppo"]["trace"]),
-                result["ppo"],
-                path_key,
-                events,
-                PPO_COLOR,
-                runner.calibration,
+                entry["label"], note, entry, path_key, events,
+                MODEL_COLORS[index % len(MODEL_COLORS)], runner.calibration,
             )
         )
     return html.Div(panels, className="comparison-grid")
@@ -1025,10 +1068,14 @@ def create_app(
                                 "Replay Fixed PID", id="replay-fixed",
                                 className="drawer-close", n_clicks=0,
                             ),
-                            html.Button(
-                                "Replay PPO", id="replay-ppo",
-                                className="drawer-close", n_clicks=0,
-                            ),
+                            *[
+                                html.Button(
+                                    f"Replay {entry['label']}",
+                                    id={"role": "replay-model", "index": index},
+                                    className="drawer-close", n_clicks=0,
+                                )
+                                for index, entry in enumerate(runner.models)
+                            ],
                         ],
                         className="selector",
                     ),
@@ -1255,7 +1302,7 @@ def create_app(
     @app.callback(
         Output("replay-status", "children"),
         Input("replay-fixed", "n_clicks"),
-        Input("replay-ppo", "n_clicks"),
+        Input({"role": "replay-model", "index": ALL}, "n_clicks"),
         State("path-select", "value"),
         State("speed-select", "value"),
         State("s-mass", "value"),
@@ -1274,13 +1321,18 @@ def create_app(
         prevent_initial_call=True,
     )
     def launch_replay(
-        _fixed_clicks, _ppo_clicks, path_key, speed, mass, friction, actuator,
+        _fixed_clicks, _model_clicks, path_key, speed, mass, friction, actuator,
         delay_ms, noise_mm, kp, ki, kd, gust_values, gust, gust_tau,
         gust_start, gust_end,
     ):
-        controller = "ppo" if ctx.triggered_id == "replay-ppo" else "fixed"
-        if controller == "ppo" and runner.model is None:
-            return "No PPO model loaded, so there is nothing to replay."
+        triggered = ctx.triggered_id
+        entry = None
+        if isinstance(triggered, dict) and triggered.get("role") == "replay-model":
+            index = int(triggered["index"])
+            if index >= len(runner.models):
+                return "That model is no longer loaded."
+            entry = runner.models[index]
+        controller = "fixed" if entry is None else "ppo"
         command = [
             sys.executable, str(project / "replay.py"),
             "--controller", controller,
@@ -1294,8 +1346,8 @@ def create_app(
             "--gains", f"{float(kp)},{float(ki)},{float(kd)}",
             "--calibration", str(runner.calibration_path),
         ]
-        if runner.model_path is not None:
-            command += ["--model", str(runner.model_path)]
+        if entry is not None:
+            command += ["--model", str(entry["path"])]
         if "on" in (gust_values or []):
             command += [
                 "--gust", str(float(gust)),
@@ -1308,7 +1360,7 @@ def create_app(
         except OSError as error:
             return f"Could not start the viewer: {error}"
         return (
-            f"Launched the {'PPO' if controller == 'ppo' else 'Fixed PID'} replay "
+            f"Launched the {entry['label'] if entry else 'Fixed PID'} replay "
             "in a separate window. Close that window when you are done; the "
             "episode metrics are printed in its console so you can check them "
             "against the panel."
@@ -1329,12 +1381,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        type=Path,
+        action="append",
         default=None,
+        metavar="[LABEL=]PATH",
         help=(
-            "PPO artifact for the right-hand panel. Defaults to "
-            f"{DirectComparisonRunner.DEFAULT_MODEL.as_posix()}; if that is "
-            "absent the dashboard still runs with the Fixed PID panel alone."
+            "PPO artifact to show as a panel. Repeat for several, e.g. "
+            "--model \"blind=runs/rq1_blind/seed21/best_model.zip\" "
+            "--model \"context=runs/rq2_context/seed42/best_model.zip\". "
+            "Each model's observation arms are read from the arms.json beside "
+            "it, so blind and plant-context models can be shown together. "
+            "Omitted, the dashboard looks for the known run directories and "
+            "falls back to the Fixed PID panel alone."
         ),
     )
     parser.add_argument(
