@@ -311,6 +311,44 @@ oracle**: allow a different fixed gain for every scenario, chosen with hindsight
 Beating that cannot be done by any fixed gain, only by varying within the
 episode.
 
+## 7. Compare the observation arms (RQ2)
+
+`summarise_batch.py` asks whether one batch beats the fixed PID. `compare_arms.py`
+asks the RQ2 question instead: how much does information the blind agent does not
+have actually buy, and does it buy a **scheduler** or just a better constant.
+
+```powershell
+..\venv\Scripts\python.exe compare_arms.py `
+  --arm blind=runs/rq1_blind `
+  --arm preview=runs/rq2_preview `
+  --arm context=runs/rq2_context `
+  --arm both=runs/rq2_both
+```
+
+The first arm is the reference the others are tested against. Nothing needs
+re-running: `confirm_advantage.py` draws its scenarios policy-free from a fixed
+`--scenario-seed`, so every arm has already replayed the identical episodes and
+the comparison is paired scenario by scenario.
+
+Three sections come out:
+
+- **integrity** -- the fixed-gain baseline involves no network, so its completion
+  count must be identical across arms. A mismatch means the arms ran different
+  scenario suites, and the comparison would measure the suite rather than the
+  observation; it aborts rather than reporting a number.
+- **paired completion** -- exact McNemar per seed over the scenarios where the two
+  arms disagree, then a sign test across seeds. Tracking is read only on episodes
+  both arms finished.
+- **scheduling** -- `corr(mean episode Kp, hidden parameter)` per arm. This is the
+  headline. The blind agent sits near zero on dead time across all five seeds: it
+  found a constant and reacts within the episode. A privileged arm that has
+  genuinely identified the plant must push the delay column clearly **negative**,
+  in every seed, not just win on completion. Winning without moving that number
+  means the information reached the observation and never reached the behaviour.
+
+Arms must cover the same seeds; `--allow-partial-seeds` compares the shared ones
+mid-batch, with a warning that belongs in any table built that way.
+
 ## Path split
 
 - Training: `arc`, `scurve`, `uturn`, `slalom`, `zigzag`, `spiral`

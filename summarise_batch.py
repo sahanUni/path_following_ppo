@@ -44,19 +44,20 @@ def load_confirmation(path: Path) -> tuple[
 ]:
     by_controller: dict[str, dict[int, dict[str, Any]]] = {}
     scenarios: dict[int, dict[str, float]] = {}
-    for row in csv.DictReader(path.open(encoding="utf-8")):
-        scenario = int(row["scenario"])
-        by_controller.setdefault(row["controller"], {})[scenario] = {
-            "finished": int(row["finished"]),
-            "distance": float(row["mean_distance_m"]),
-            "mean_kp": float(row["mean_kp"]),
-        }
-        scenarios[scenario] = {
-            "delay": float(row["actuator_delay_s"]),
-            "mass": float(row["mass"]),
-            "friction": float(row["friction"]),
-            "noise": float(row["sensor_noise_m"]),
-        }
+    with path.open(encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            scenario = int(row["scenario"])
+            by_controller.setdefault(row["controller"], {})[scenario] = {
+                "finished": int(row["finished"]),
+                "distance": float(row["mean_distance_m"]),
+                "mean_kp": float(row["mean_kp"]),
+            }
+            scenarios[scenario] = {
+                "delay": float(row["actuator_delay_s"]),
+                "mass": float(row["mass"]),
+                "friction": float(row["friction"]),
+                "noise": float(row["sensor_noise_m"]),
+            }
     return by_controller, scenarios
 
 

@@ -224,6 +224,22 @@ for seed in 7 21 42 84 123; do
 done
 ```
 
+Then the two aggregators. `summarise_batch.py --run-root runs/rq1_blind` for RQ1
+(PPO against the fixed PID, within one arm), and `compare_arms.py` for RQ2:
+
+```bash
+python compare_arms.py \
+  --arm blind=runs/rq1_blind \
+  --arm preview=runs/rq2_preview \
+  --arm context=runs/rq2_context \
+  --arm both=runs/rq2_both
+```
+
+Every arm shares the same `--scenario-seed` default, so the arms are already
+paired scenario by scenario and nothing needs re-running. `compare_arms.py`
+checks that before it compares: the fixed-gain rows involve no network, so their
+completion count must be identical across arms, and it aborts if it is not.
+
 Copy the `confirm_200.csv` files and `evaluation_history.csv` back to the laptop
 for plotting. The model zips are ~400 KB each if you want them for the
 dashboard; the checkpoints and tensorboard directories are the bulk and are
