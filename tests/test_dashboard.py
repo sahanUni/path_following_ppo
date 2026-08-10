@@ -87,12 +87,16 @@ class DashboardTests(unittest.TestCase):
         )
         self.assertEqual(len(figure.data[0].x), len(trace))
 
-    def test_view_is_only_the_two_controller_columns(self):
+    def test_view_is_the_fixed_column_plus_one_per_model(self):
+        """One panel per loaded controller. With both arms present that is
+        three -- Fixed PID, blind, plant-context -- and the labels have to match
+        the models actually loaded, or the panels are unreadable."""
         view = comparison_view(self.result, self.runner)
         self.assertEqual(view.className, "comparison-grid")
-        self.assertEqual(len(view.children), 2)
+        self.assertEqual(len(view.children), 1 + len(self.runner.models))
         self.assertEqual(view.children[0].children[0].children, "Fixed PID")
-        self.assertEqual(view.children[1].children[0].children, "PPO")
+        for panel, entry in zip(view.children[1:], self.runner.models):
+            self.assertEqual(panel.children[0].children, entry["label"])
 
     def test_app_has_only_path_and_speed_inputs(self):
         app = create_app(self.project)
