@@ -2,7 +2,12 @@ numpy==2.2.6
 mujoco==3.9.0
 gymnasium==1.3.0
 stable-baselines3==2.9.0
-torch>=2.8,<3.0
+# Pinned exactly, like numpy/mujoco/gymnasium above. A range let the laptop
+# land on 2.12.0 and the compute node on 2.13.0, which is an uncontrolled
+# variable in every reported number. Only the policy network runs through
+# torch, so it cannot explain physics differences -- but it should not be free
+# to vary either.
+torch==2.13.0
 matplotlib>=3.10,<4.0
 tensorboard>=2.20,<3.0
 tqdm>=4.67,<5.0

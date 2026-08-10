@@ -20,14 +20,27 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+from importlib import import_module
 import json
 import os
 from pathlib import Path
+import platform as platform_module
 import subprocess
 import sys
 import time
 
 PROJECT = Path(__file__).resolve().parent
+
+
+def package_versions() -> dict[str, str]:
+    """Versions of everything that can move a trajectory."""
+    versions: dict[str, str] = {}
+    for name in ("numpy", "mujoco", "gymnasium", "torch", "stable_baselines3"):
+        try:
+            versions[name] = import_module(name).__version__
+        except Exception as error:  # noqa: BLE001 - a manifest must never fail a batch
+            versions[name] = f"unavailable: {error}"
+    return versions
 
 
 def usable_cores() -> int:
@@ -108,6 +121,15 @@ def main() -> None:
         "slurm_cpus_per_task": os.environ.get("SLURM_CPUS_PER_TASK"),
         "python": sys.version.split()[0],
         "platform": sys.platform,
+        # Recorded per batch, because the numbers are only reproducible against
+        # a known stack. MuJoCo is not bit-reproducible across CPU
+        # microarchitectures -- laptop and compute node agreed on every
+        # conclusion but disagreed on 33 of 1400 individual episodes, all of
+        # them sitting on the corridor boundary. Knowing the exact versions is
+        # what separates "different machine" from "something changed".
+        "packages": package_versions(),
+        "host": platform_module.node(),
+        "machine": platform_module.machine(),
     }
     (run_root / "batch_manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
