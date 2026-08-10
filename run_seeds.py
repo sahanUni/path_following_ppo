@@ -83,8 +83,10 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="",
         help=(
-            "Passed through to train.py verbatim, e.g. \"--no-delay --no-noise\" "
-            "for the clean-plant ablation arm. Recorded in the manifest."
+            "Passed through to train.py verbatim. MUST use the = form, because "
+            "a value starting with a dash is otherwise read as another option: "
+            "--extra=\"--plant-context\", not --extra \"--plant-context\". "
+            "Recorded in the batch manifest."
         ),
     )
     parser.add_argument("--dry-run", action="store_true")
@@ -103,6 +105,17 @@ def main() -> None:
     run_root = PROJECT / args.run_root
     run_root.mkdir(parents=True, exist_ok=True)
     extra = args.extra.split()
+    unknown = [token for token in extra if token.startswith("--") and token not in {
+        "--no-gusts", "--no-delay", "--no-noise", "--preview", "--plant-context",
+    }]
+    if unknown:
+        # Caught here rather than five processes later: a typo in --extra
+        # would otherwise fail every child identically, and the batch would
+        # look like a code problem instead of a spelling one.
+        raise SystemExit(
+            f"unrecognised flags in --extra: {unknown}. Known arm flags are "
+            "--no-gusts, --no-delay, --no-noise, --preview, --plant-context."
+        )
     jobs = args.jobs if args.jobs > 0 else len(seeds)
 
     # The manifest is what makes a batch auditable months later: which seeds,

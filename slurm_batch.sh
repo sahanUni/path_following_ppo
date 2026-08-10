@@ -55,7 +55,7 @@ python run_seeds.py \
   --calibration "${CALIBRATION}" \
   --run-root "${RUN_ROOT}" \
   --threads-per-job 1 \
-  --extra "${EXTRA}"
+  --extra="${EXTRA}"
 
 echo
 echo "training done, running the paired confirmation for each seed"

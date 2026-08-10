@@ -151,13 +151,13 @@ python run_seeds.py --seeds 7,21,42,84,123 --calibration runs/calibration_v7.jso
 # result is that PPO and the fixed baseline converge, which is the control
 # showing the effect comes from the plant having a real tradeoff.
 python run_seeds.py --seeds 7,21,42,84,123 --calibration runs/calibration_v7.json \
-  --run-root runs/rq1_clean --extra "--no-delay --no-noise" &
+  --run-root runs/rq1_clean --extra="--no-delay --no-noise" &
 
 # one imperfection at a time, to attribute the effect
 python run_seeds.py --seeds 7,21,42 --calibration runs/calibration_v7.json \
-  --run-root runs/rq1_nodelay --extra "--no-delay" &
+  --run-root runs/rq1_nodelay --extra="--no-delay" &
 python run_seeds.py --seeds 7,21,42 --calibration runs/calibration_v7.json \
-  --run-root runs/rq1_nonoise --extra "--no-noise" &
+  --run-root runs/rq1_nonoise --extra="--no-noise" &
 ```
 
 That is 21 cores on four arms that all feed the write-up. Every batch drops a
@@ -173,11 +173,11 @@ on information that was not privileged.
 
 ```bash
 python run_seeds.py --seeds 7,21,42,84,123 --calibration runs/calibration_v7.json \
-  --run-root runs/rq2_preview --extra "--preview" &
+  --run-root runs/rq2_preview --extra="--preview" &
 python run_seeds.py --seeds 7,21,42,84,123 --calibration runs/calibration_v7.json \
-  --run-root runs/rq2_context --extra "--plant-context" &
+  --run-root runs/rq2_context --extra="--plant-context" &
 python run_seeds.py --seeds 7,21,42,84,123 --calibration runs/calibration_v7.json \
-  --run-root runs/rq2_both --extra "--preview --plant-context" &
+  --run-root runs/rq2_both --extra="--preview --plant-context" &
 ```
 
 Each arm changes the observation width, so its models are not interchangeable
